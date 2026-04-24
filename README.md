@@ -10,13 +10,13 @@ A fully playable Sudoku game on the command line. The program supports puzzle ge
 
 ### Features
 - Displays a 9×9 Sudoku grid with 30 pre-filled numbers and empty cells (`_`)
-- Place a number into a specific cell (e.g., `A3 4`)
+- Place a number into a specific cell (e.g., `A3 4` or `a3 4` — row label is case-insensitive)
 - Clear a cell (e.g., `C5 clear`)
-- Request a hint (e.g., `hint`) — reveals one correct number
+- Request a hint (e.g., `hint`) — reveals **and fills in** one correct cell automatically
 - Check the current grid for validity (e.g., `check`)
 - Quit the game at any time (e.g., `quit`)
 - Detects row, column, and 3×3 subgrid violations
-- Celebrates when the puzzle is correctly completed
+- Celebrates when the puzzle is correctly completed; press any key to start a new puzzle
 
 ---
 
@@ -41,6 +41,8 @@ This will compile the source code, run all tests, and produce a JAR file at:
 ```
 target/sudoku-game-cli.jar
 ```
+
+> **Note:** The build requires `maven-surefire-plugin` 3.x (declared in `pom.xml`). Maven's default surefire version (2.x) silently skips JUnit 5 tests.
 
 ---
 
@@ -114,15 +116,16 @@ Enter command (e.g., A3 4, C5 clear, hint, check, quit):
 |---|---|---|
 | `{Row}{Col} {value}` | Place a number (1–9) in a cell | `A3 4` |
 | `{Row}{Col} clear` | Clear a user-placed cell | `C5 clear` |
-| `hint` | Reveal one correct cell | `hint` |
+| `hint` | Reveal and fill in one correct cell | `hint` |
 | `check` | Check grid for rule violations | `check` |
 | `quit` | Exit the game | `quit` |
 
 ### Rules
-- Rows are labeled **A–I**, columns are labeled **1–9**
+- Rows are labeled **A–I** (case-insensitive: `a3 4` and `A3 4` are both valid)
+- Columns are labeled **1–9**
 - You cannot modify pre-filled cells
 - Numbers must be between **1–9**
-- The game ends when all cells are correctly filled
+- The game ends when all cells are correctly filled — press any key to play again with a new puzzle
 
 ---
 
@@ -151,9 +154,9 @@ The project follows a **layered architecture** with clear separation of concerns
 ### SOLID Principles
 - **Single Responsibility** — Each class has one clearly defined job
 - **Open/Closed** — New commands added without modifying `GameEngine`
-- **Liskov Substitution** — Interfaces for all major components
-- **Interface Segregation** — Move validation and board validation are separate
-- **Dependency Inversion** — `GameEngine` depends on interfaces, injected via constructor
+- **Liskov Substitution** — `IMoveValidator`, `IBoardValidator`, `IHintProvider` interfaces allow substitution
+- **Interface Segregation** — Move validation and board validation are separate interfaces
+- **Dependency Inversion** — `GameEngine` depends on interfaces (`IMoveValidator`, `IBoardValidator`, `IHintProvider`), concrete implementations injected from `Main`
 
 ---
 

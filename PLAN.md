@@ -33,9 +33,12 @@ sudoku-game-cli/
 │   │           ├── generator/
 │   │           │   └── PuzzleGenerator.java
 │   │           ├── validator/
+│   │           │   ├── IMoveValidator.java        # interface
+│   │           │   ├── IBoardValidator.java       # interface
 │   │           │   ├── MoveValidator.java
 │   │           │   └── BoardValidator.java
 │   │           ├── hint/
+│   │           │   ├── IHintProvider.java         # interface
 │   │           │   └── HintProvider.java
 │   │           ├── engine/
 │   │           │   ├── GameEngine.java
@@ -75,6 +78,7 @@ sudoku-game-cli/
 - `int value` — 0 means empty
 - `boolean isPreFilled` — set at puzzle generation, immutable
 - Methods: `isEmpty()`, `isPreFilled()`, `getValue()`, `setValue()`, `clear()`
+- `setValue()` and `clear()` throw `IllegalStateException` if cell is pre-filled (programming guard — `MoveValidator` catches this before the call)
 
 ### `Grid.java`
 - `Cell[][] cells` — 9×9 board
@@ -129,8 +133,9 @@ public record QuitCommand()                                    implements Comman
 | other       | throws `InvalidCommandException`     |
 
 Regex patterns:
-- Place/Clear: `^([a-i])([1-9])\s+([1-9]|clear)$`
+- Place/Clear: `^([a-iA-I])([1-9])\s+([1-9]|clear)$` — accepts upper and lowercase row letters, normalized to uppercase internally
 - Simple commands: `^(hint|check|quit)$`
+- Both patterns compiled as `static final Pattern` constants (not recompiled per call)
 
 ---
 
@@ -144,34 +149,61 @@ Regex patterns:
 
 ### `PuzzleGenerator.java`
 1. Create empty `Grid`
-2. `solver.solve(grid)` → complete valid solution
-3. `deepCopy()` → save as solution
-4. Randomly remove cells until exactly **30 pre-filled remain**
-5. Return `PuzzleBundle(puzzle, solution)`
+2. `solver.solve(grid)` → complete valid solution (mutates in-place, so `deepCopy()` before this if you need the original)
+3. `deepCopy()` → save as solution; second `deepCopy()` → working puzzle (all cells pre-filled initially)
+4. Shuffle all 81 positions; for each candidate removal: un-pre-fill the cell, run `countSolutions(puzzle)` (stops counting at 2); if count ≠ 1, revert
+5. Continue until exactly **30 pre-filled cells remain**
+6. Return `PuzzleBundle(puzzle, solution)`
+
+**Uniqueness guarantee:** `countSolutions` uses the same backtracking solver on a deep copy and stops as soon as 2 solutions are found, keeping runtime fast (milliseconds per puzzle).
 
 ---
 
 ## ✅ Validator Layer
 
-### `MoveValidator.java`
-- Rejects pre-filled cells → "Invalid move. {pos} is pre-filled."
-- Value must be 1–9 (also enforced by parser)
+### `IMoveValidator.java` — Interface
+```java
+public interface IMoveValidator {
+    MoveResult validate(Grid puzzle, Position position);
+}
+```
 
-### `BoardValidator.java`
-- Checks all 9 rows → "Number X already exists in Row A."
-- Checks all 9 columns → "Number X already exists in Column 1."
-- Checks all 9 subgrids → "Number X already exists in the same 3×3 subgrid."
+### `MoveValidator.java` — implements `IMoveValidator`
+- Rejects pre-filled cells → `"Invalid move. {pos} is pre-filled."` (e.g., `"Invalid move. A1 is pre-filled."`)
+- Value range 1–9 enforced by parser; no re-validation needed here
+
+### `IBoardValidator.java` — Interface
+```java
+public interface IBoardValidator {
+    List<Violation> validate(Grid grid);
+}
+```
+
+### `BoardValidator.java` — implements `IBoardValidator`
+- Checks all 9 rows → `"Number X already exists in Row A."`
+- Checks all 9 columns → `"Number X already exists in Column 1."`
+- Checks all 9 subgrids → `"Number X already exists in the same 3×3 subgrid."` — **unicode `×` (U+00D7), not ASCII `x`**
+- Uses `Set.add()` returning `false` to detect duplicates; skips empty cells (value 0)
 - Returns `List<Violation>` (empty = no violations)
 
 ---
 
 ## 💡 Hint Provider
 
-### `HintProvider.java`
-1. Collect all empty cells from puzzle
+### `IHintProvider.java` — Interface
+```java
+public interface IHintProvider {
+    Optional<Hint> provide(Grid puzzle, Grid solution);
+}
+```
+
+### `HintProvider.java` — implements `IHintProvider`
+1. Collect all positions where `puzzle.getCell(r,c).getValue() == 0`
 2. If none → `Optional.empty()`
-3. Pick one randomly
+3. Shuffle list (inject `Random` via constructor for testability), pick the first
 4. Return `Optional.of(new Hint(position, solution.getCell(...).getValue()))`
+
+**Important:** The `GameEngine` both **applies** the hint to the puzzle grid (fills the cell) AND displays `"Hint: Cell E5 = 5"`. The hint is not just a display-only suggestion.
 
 ---
 
@@ -191,8 +223,11 @@ public GameResponse process(Command command) {
 }
 ```
 
-- Injected via constructor: `MoveValidator`, `BoardValidator`, `HintProvider`, `PuzzleBundle`
+- Injected via constructor: `IMoveValidator`, `IBoardValidator`, `IHintProvider`, `PuzzleBundle` (concrete implementations wired in `Main`)
+- Win check only after `PlaceNumberCommand` and `HintCommand` (the two value-setting operations)
 - `isWon()` = `puzzle.isSolved() && boardValidator.validate(puzzle).isEmpty()`
+- `handleCheck()` with no violations → `"No rule violations detected."` (exact string)
+- `handleHint()` with no empty cells → `"No hints available."`
 
 ---
 
@@ -204,7 +239,8 @@ public GameResponse process(Command command) {
 - Grid format: column headers `1–9`, row labels `A–I`, empty = `_`
 
 ### `ConsoleInputReader.java`
-- `readLine()`, `waitForKeyPress()`, `close()`
+- Single `Scanner(System.in)` instance created in constructor — never create multiple instances on `System.in`
+- `readLine()` trims whitespace, `waitForKeyPress()`, implements `AutoCloseable`
 
 ---
 
@@ -289,9 +325,11 @@ renderWelcome() + renderGrid(puzzle)
     <java.version>21</java.version>
     <maven.compiler.source>21</maven.compiler.source>
     <maven.compiler.target>21</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 </properties>
 
 <dependencies>
+    <!-- No runtime dependencies — zero external libs that solve Sudoku -->
     <dependency>
         <groupId>org.junit.jupiter</groupId>
         <artifactId>junit-jupiter</artifactId>
@@ -311,6 +349,31 @@ renderWelcome() + renderGrid(puzzle)
         <scope>test</scope>
     </dependency>
 </dependencies>
+
+<build>
+    <plugins>
+        <!-- CRITICAL: surefire 2.x silently skips JUnit 5 — must use 3.x -->
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <version>3.2.5</version>
+        </plugin>
+        <!-- Produces executable thin jar (no runtime deps to bundle) -->
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-jar-plugin</artifactId>
+            <version>3.3.0</version>
+            <configuration>
+                <archive>
+                    <manifest>
+                        <mainClass>com.sudoku.Main</mainClass>
+                    </manifest>
+                </archive>
+                <finalName>sudoku-game-cli</finalName>
+            </configuration>
+        </plugin>
+    </plugins>
+</build>
 ```
 
 ---
